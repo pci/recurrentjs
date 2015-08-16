@@ -63,13 +63,13 @@ var R = {}; // the Recurrent library
       // slow but careful accessor function
       // we want row-major order
       var ix = (this.d * row) + col;
-      assert(ix >= 0 && ix < this.w.length);
+      assert(ix >= 0 && ix < this.w.length, "ix range failed in Mat.get");
       return this.w[ix];
     },
     set: function(row, col, v) {
       // slow but careful accessor function
       var ix = (this.d * row) + col;
-      assert(ix >= 0 && ix < this.w.length);
+      assert(ix >= 0 && ix < this.w.length, "ix range failed in Mat.set");
       this.w[ix] = v; 
     },
     toJSON: function() {
@@ -121,7 +121,7 @@ var R = {}; // the Recurrent library
     },
     rowPluck: function(m, ix) {
       // pluck a row of m with index ix and return it as col vector
-      assert(ix >= 0 && ix < m.n);
+      assert(ix >= 0 && ix < m.n, "ix range failed in Graph.rowPluck");
       var d = m.d;
       var out = new Mat(d, 1);
       for(var i=0,n=d;i<n;i++){ out.w[i] = m.w[d * ix + i]; } // copy over the data
@@ -224,7 +224,7 @@ var R = {}; // the Recurrent library
       return out;
     },
     add: function(m1, m2) {
-      assert(m1.w.length === m2.w.length);
+      assert(m1.w.length === m2.w.length, "size difference in Graph.add");
 
       var out = new Mat(m1.n, m1.d);
       for(var i=0,n=m1.w.length;i<n;i++) {
@@ -242,7 +242,7 @@ var R = {}; // the Recurrent library
       return out;
     },
     eltmul: function(m1, m2) {
-      assert(m1.w.length === m2.w.length);
+      assert(m1.w.length === m2.w.length, "size difference in Graph.eltmul");
 
       var out = new Mat(m1.n, m1.d);
       for(var i=0,n=m1.w.length;i<n;i++) {
