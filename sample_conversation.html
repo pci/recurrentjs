@@ -95,7 +95,7 @@ var pplGraph = new Rvis.Graph();
 
 var model = {};
 
-var initVocab = function(sents, count_threshold) {
+var initVocab = function(count_threshold) {
   // go over all characters and keep track of all unique ones seen
   // select 10% of conversations
   var txt = data_msgs.filter(function(){return Math.random() < 0.1;}).reduce(function(curr, nxt){return curr+nxt.join('');}, ''); // fixed input
@@ -190,20 +190,10 @@ var reinit = function(cb) {
   ppl_list = [];
   tick_iter = 0;
 
-  // process the input, filter out blanks
-  var data_sents_raw = $('#ti').val().split('\n');
-  data_sents = [];
-  for(var i=0;i<data_sents_raw.length;i++) {
-    var sent = data_sents_raw[i].trim();
-    if(sent.length > 0) {
-      data_sents.push(sent);
-    }
-  }
-
   $.getJSON("data/conversations.json", function( data ) {
     data_msgs = data;
     console.log(data_msgs.length, data_msgs[0].length);
-    initVocab(data_sents, 1); // takes count threshold for characters
+    initVocab(1); // takes count threshold for characters
     model = initModel();
     cb();
   });
