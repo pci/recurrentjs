@@ -22,8 +22,6 @@ body {
 .apred {
   padding: 2px;
   margin: 5px;
-  overflow: hidden;
-  height: 20px;
   font-size: 14px;
 }
 #prepro_status {
@@ -99,7 +97,10 @@ var model = {};
 
 var initVocab = function(sents, count_threshold) {
   // go over all characters and keep track of all unique ones seen
-  var txt = "abcdefghijklmnopqrstuvwxyz"; // fixed input
+  // select 10% of conversations
+  var txt = data_msgs.filter(function(){return Math.random() < 0.1;}).reduce(function(curr, nxt){return curr+nxt.join('');}, ''); // fixed input
+
+  console.log(txt.length);
 
   // count up all characters
   var d = {};
@@ -118,17 +119,19 @@ var initVocab = function(sents, count_threshold) {
   // and END token will be index 0 in the next character softmax
   var q = 1; 
   for(ch in d) {
-    // add character to vocab
-    letterToIndex[ch] = q;
-    indexToLetter[q] = ch;
-    vocab.push(ch);
-    q++;
+    if(d[ch] >= count_threshold) {
+      // add character to vocab
+      letterToIndex[ch] = q;
+      indexToLetter[q] = ch;
+      vocab.push(ch);
+      q++;
+    }
   }
 
   // globals written: indexToLetter, letterToIndex, vocab (list), and:
   input_size = vocab.length + 1;
   output_size = vocab.length + 1;
-  epoch_size = 6;
+  epoch_size = data_msgs.length;
   $("#prepro_status").text('found ' + vocab.length + ' distinct characters: ' + vocab.join(''));
 }
 
@@ -173,7 +176,7 @@ var reinit_learning_rate_slider = function() {
   $("#lr_text").text(learning_rate.toFixed(5));
 }
 
-var reinit = function() {
+var reinit = function(cb) {
   // note: reinit writes global vars
   
   // eval options to set some globals
@@ -197,8 +200,13 @@ var reinit = function() {
     }
   }
 
-  initVocab(data_sents, 1); // takes count threshold for characters
-  model = initModel();
+  $.getJSON("data/conversations.json", function( data ) {
+    data_msgs = data;
+    console.log(data_msgs.length, data_msgs[0].length);
+    initVocab(data_sents, 1); // takes count threshold for characters
+    model = initModel();
+    cb();
+  });
 }
 
 var saveModel = function() {
@@ -410,7 +418,7 @@ var costfunconvo = function(model, msgs) {
   }
 
   var i;
-  for(var m=-1;m<msgs.length;m++) {
+  for(var m=2;m<msgs.length;m++) {
     currmsg = msgs[m];
     n = currmsg.length;
 
@@ -496,7 +504,6 @@ var tick = function() {
   var index = tick_iter % data_msgs.length;
 
   // evaluate cost function on a sentence
-  console.log(index, data_msgs[index]);
   var cost_struct = costfunconvo(model, data_msgs[index]);
   
   // use built up graph to compute backprop (set .dw fields in mats)
@@ -579,9 +586,10 @@ $(function() {
 
   // attach button handlers
   $('#learn').click(function(){ 
-    reinit();
-    if(iid !== null) { clearInterval(iid); }
-    iid = setInterval(tick, 0); 
+    reinit(function(){
+      if(iid !== null) { clearInterval(iid); }
+      iid = setInterval(tick, 0); 
+    });
   });
   $('#stop').click(function(){ 
     if(iid !== null) { clearInterval(iid); }
@@ -621,10 +629,6 @@ $(function() {
     }
   });
 
-  $.getJSON( "data/conversations.json", function( data ) {
-    data_msgs = data;
-    $("#learn").removeAttr("disabled");
-  });
 });
 
 </script>
@@ -635,30 +639,12 @@ $(function() {
 
 
 <div id="wrap">
-  <h1>Deep Recurrent Nets character generation demo</h1>
-  <div id="intro">
-    This demo shows usage of the <a href="https://github.com/karpathy/recurrentjs">recurrentjs library</a> that allows you to train deep Recurrent Neural Networks (RNN) and Long Short-Term Memory Networks (LSTM) in Javascript. But the core of the library is more general and allows you to set up arbitrary expression graphs that support fully automatic backpropagation.<br><br>
-
-    In this demo we take a dataset of sentences as input and learn to memorize the sentences character by character. That is, the RNN/LSTM takes a character, its context from previous time steps (as mediated by the hidden layers) and predicts the next character in the sequence. Here is an example: <br><br>
-
-    <div style="text-align:center;"><img src="eg.png"></div>
-
-    In the example image above that depicts a deep RNN, every character has an associated "letter vector" that we will train with backpropagation. These letter vectors are combined through a (learnable) Matrix-vector multiply transformation into the first hidden layer representation (yellow), then into second hidden layer representation (purple), and finally into the output space (blue). The output space has dimensionality equal to the number of characters in the dataset and every dimension provides the probability of the next character in the sequence. The network is therefore trained to always predict the next character (using Softmax + cross-entropy loss on all letters). The quantity we track during training is called the <b>perplexity</b>, which measures how surprised the network is to see the next character in a sequence. For example, if perplexity is 4.0 then it's as if the network was guessing uniformly at random from 4 possible characters for next letter (i.e. lowest it can be is 1). At test time, the prediction is currently done iteratively character by character in a greedy fashion, but I might eventually implemented more sophisticated methods (e.g. beam search).<br><br>
-
-    The demo is pre-filled with sentences from <a href="http://www.paulgraham.com/articles.html">Paul Graham's essays</a>, in an attempt to encode Paul Graham's knowledge into the weights of the Recurrent Networks. The long-term goal of the project then is to generate startup wisdom at will. Feel free to train on whatever data you wish, and to experiment with the parameters. If you want more impressive models you have to increase the sizes of hidden layers, and maybe slightly the letter vectors. However, this will take longer to train.<br><br>
-
-    For suggestions/bugs ping me at <a href="https://twitter.com/karpathy">@karpathy</a>.<br><br>
-
-  </div>
-  <div>
-    <div class="hh">Input sentences:</div>
-    <textarea style="width:100%; height:200px;" id="ti">
-    </textarea>
-  </div>
+  <h1>Deep Recurrent Nets conversation generation demo</h1>
+ 
   <div id="prepro_status"></div>
 
   <div class="hh">Controls/Options:</div>
-  <button id="learn" class="abutton" disabled>learn/restart</button>
+  <button id="learn" class="abutton">learn/restart</button>
   <button id="resume" class="abutton">resume</button>
   <button id="stop" class="abutton">pause</button>
   <!-- <button id="gradcheck">gradcheck</button> -->
@@ -666,8 +652,8 @@ $(function() {
 
 // model parameters
 generator = 'lstm'; // can be 'rnn' or 'lstm'
-hidden_sizes = [20,20]; // list of sizes of hidden layers
-letter_size = 5; // size of letter embeddings
+hidden_sizes = [25,25,25,25]; // list of sizes of hidden layers
+letter_size = 6; // size of letter embeddings
 
 // optimization
 regc = 0.000001; // L2 regularization strength
