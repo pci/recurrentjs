@@ -412,6 +412,8 @@ var tick = function() {
       pplGraph.drawSelf(document.getElementById("pplgraph"));
     }
   }
+
+  setTimeout(tick, 0);
 }
 
 var gradCheck = function() {
@@ -450,16 +452,16 @@ $(function() {
   // attach button handlers
   $('#learn').click(function(){ 
     reinit();
-    if(iid !== null) { clearInterval(iid); }
-    iid = setInterval(tick, 0); 
+    if(iid !== null) { clearTimeout(iid); }
+    tick(); 
   });
   $('#stop').click(function(){ 
-    if(iid !== null) { clearInterval(iid); }
+    if(iid !== null) { clearTimeout(iid); }
     iid = null;
   });
   $("#resume").click(function(){
     if(iid === null) {
-      iid = setInterval(tick, 0); 
+      tick(); 
     }
   });
 
