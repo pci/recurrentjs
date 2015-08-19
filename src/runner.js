@@ -210,7 +210,7 @@ var costfunconvo = function(model, msgs) {
   }
 
   var i;
-  for(var m=2;m<msgs.length;m++) {
+  for(var m=1;m<msgs.length;m++) {
     currmsg = msgs[m];
     n = currmsg.length;
     totaln += n;
