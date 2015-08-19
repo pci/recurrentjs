@@ -77,6 +77,7 @@ var R = {}; // the Recurrent library
       json['n'] = this.n;
       json['d'] = this.d;
       json['w'] = this.w;
+      // add dw as needed for host-thread hand-over
       json['dw'] = this.dw;
       return json;
     },

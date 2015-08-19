@@ -258,6 +258,46 @@ function median(values) {
   else return (values[half-1] + values[half]) / 2.0;
 }
 
+
+var reduceModels = function(modelIttList){
+  // reduceModels takes a list of {model, noItt}
+  // where the models are identically shaped and have identical weights
+  // (otherwise it doesn't make sense) and combine their differentials.
+  // The noItt is used to normalize the differentials after reducing
+  var outmodel = modelIttList[0].model;
+  var sumItt = modelIttList.reduce(function(curr,nxt){return curr+nxt.noItt;}, 0);
+
+  for(var k in outmodel) {
+    if(outmodel.hasOwnProperty(k)) {
+      if(!outmodel[k].hasOwnProperty("dw")) continue;
+      for(var i=1;i<modelIttList.length;i++){
+        var othermodel = modelIttList[i].model;
+        for(var j=0;j<outmodel[k].dw.length;j++){
+          outmodel[k].dw[j] += othermodel[k].dw[j];
+        }
+      }
+    }
+  }
+
+  return {model: outmodel, noItt: sumItt};
+}
+
+var normalizeModel = function(modelItt){
+  var outmodel = modelItt.model;
+  var sumItt = modelItt.noItt;
+
+  for(var k in outmodel) {
+    if(outmodel.hasOwnProperty(k)) {
+      if(!outmodel[k].hasOwnProperty("dw")) continue;
+      for(var j=0;j<outmodel[k].dw.length;j++){
+        outmodel[k].dw[j] /= sumItt;
+      }
+    }
+  }
+
+  return outmodel;
+}
+
 var iid = null;
 $(function() {
 
@@ -306,95 +346,137 @@ $(function() {
     }
   });
 
+  // noOfWorkers - the number of calculation threads to run
+  // (an additional thread is used for predictions)
+  // workerLoad - how many conversations to process with the
+  // current model before sending the results back to host
 
+  var noOfWorkers = 2;
   var workerload = 10;
+
   var t0 = +new Date();
   var noprocessed = 0;
   var ppl_list = [];
+  var workersDone = 0;
+  var workerResults = [];
 
-  var worker = new Worker("src/runner.js");
+  var workers = [];
+  for(var i=0;i<noOfWorkers;i++){
+    workers.push(new Worker("src/runner.js"));
+  }
   var predictor = new Worker("src/runner.js");
-  worker.addEventListener("message", function(e){
-    switch(e.data.type){
-      case "setup": $.getJSON("data/conversations.json", function( data ) {
-                      data_msgs = data;
-                      worker.postMessage({type: "setDataSet", data: data});
-                      predictor.postMessage({type: "setDataSet", data: data});
-                      console.log(data_msgs.length, data_msgs[0].length);
-                    });
-                    break;
-      case "setDataSetDone": worker.postMessage({type: "calcVocab"});
-                             break;
-      case "calcVocabDone": eval($("#newnet").val());
-                            reinit_learning_rate_slider();
-                            solver = new R.Solver(); // reinit solver
-                            
-                            // Use results from calcVocab
-                            console.log(e.data);
-                            vocab=e.data.vocab;
-                            input_size=e.data.input_size;
-                            output_size=e.data.output_size;
-                            epoch_size=e.data.epoch_size;
-                            letterToIndex=e.data.letterToIndex;
-                            indexToLetter=e.data.indexToLetter;
-                            $("#prepro_status").text('found ' + vocab.length + ' distinct characters: ' + vocab.join(''));
 
-                            model = initModel();
-                            var ids = [];
-                            for(var i=0;i<workerload;i++){
-                             ids.push(R.randi(0, data_msgs.length));
+  workers[0].addEventListener("message", function(e){
+      switch(e.data.type){
+        case "setDataSetDone": workers[0].postMessage({type: "calcVocab"});
+                               break;
+        case "calcVocabDone": eval($("#newnet").val());
+                              reinit_learning_rate_slider();
+                              solver = new R.Solver(); // reinit solver
+                              
+                              // Use results from calcVocab
+                              console.log(e.data);
+                              vocab=e.data.vocab;
+                              input_size=e.data.input_size;
+                              output_size=e.data.output_size;
+                              epoch_size=e.data.epoch_size;
+                              letterToIndex=e.data.letterToIndex;
+                              indexToLetter=e.data.indexToLetter;
+                              $("#prepro_status").text('found ' + vocab.length + ' distinct characters: ' + vocab.join(''));
+
+                              model = initModel();
+                              var smodel = saveModelInternal();
+                              var ids;
+                              workersDone = 0;
+                              workerResults = [];
+                              // Just going to assume all workers done with loading data
+                              // as calcVocab takes a long time (TODO: parallelize calcVocab)
+                              workers.forEach(function(worker){
+                                ids = [];
+                                for(var i=0;i<workerload;i++){
+                                 ids.push(R.randi(0, data_msgs.length));
+                                }
+                                console.log("ids", ids);
+                                worker.postMessage({type: "process", model: smodel, ids:ids});
+                              });
+                              break;
+      }
+  });
+
+  workers.forEach(function(worker){
+    worker.addEventListener("message", function(e){
+      switch(e.data.type){
+        case "setup": $.getJSON("data/conversations.json", function( data ) {
+                        data_msgs = data;
+                        worker.postMessage({type: "setDataSet", data: data});
+                        console.log(data_msgs.length, data_msgs[0].length);
+                      });
+                      break;
+        case "processDone": workerResults.push({model: e.data.model, noItt: workerload});
+                            ppl_list = ppl_list.concat(e.data.ppls); 
+                            if(++workersDone == noOfWorkers){
+                              var reduct = reduceModels(workerResults);
+                              var norm = normalizeModel(reduct);
+
+                              loadModelInternal(norm);
+                              var solver_stats = solver.step(model, learning_rate, regc, clipval);
+
+                              var t1 = +new Date();
+                              var tick_time = t1 - t0;
+                              t0 = t1;
+                              noprocessed += workerload*noOfWorkers;
+
+                              // Send new process command so fancy displaying can be done in parallel
+                              var ids;
+                              var smodel = saveModelInternal();
+                              workersDone = 0;
+                              workerResults = [];
+                              workers.forEach(function(worker){
+                                ids = [];
+                                for(var i=0;i<workerload;i++){
+                                 ids.push(R.randi(0, data_msgs.length));
+                                }
+                                console.log("ids", ids);
+                                worker.postMessage({type: "process", model: smodel, ids:ids});
+                              });
+
+                              if(noprocessed/(workerload*noOfWorkers) % 2 == 1){
+                                // Run the predictor in a seperate thread
+                                ids = [];
+                                for(var i=0;i<5;i++){
+                                 ids.push(R.randi(0, data_msgs.length));
+                                }
+                                // do some predictions
+                                predictor.postMessage({type: "predict", maxLength: max_chars_gen, model: smodel, ids: ids, temperature: sample_softmax_temperature});
+                              }
+
+                              if(noprocessed/(workerload*noOfWorkers) % 10 == 9){
+                                var median_ppl = median(ppl_list);
+                                ppl_list = [];
+                                pplGraph.add(noprocessed, median_ppl);
+                                pplGraph.drawSelf(document.getElementById("pplgraph"));
+                              }
+
+
+
+                              // keep track of perplexity
+                              $('#epoch').text('epoch: ' + (noprocessed/epoch_size).toFixed(3) + " ("+noprocessed+" conversations processed)");
+                              $('#ppl').text('perplexity: ' + median(e.data.ppls).toFixed(2));
+                              $('#ticktime').text('forw/bwd time per example: ' + (tick_time/workerload).toFixed(1) + 'ms');
                             }
-                            console.log("ids", ids);
-                            worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
+
                             break;
-      case "processDone": // TODO
-                          loadModelInternal(e.data.model);
-                          var solver_stats = solver.step(model, learning_rate, regc, clipval);
-
-                          var t1 = +new Date();
-                          var tick_time = t1 - t0;
-                          t0 = t1;
-                          noprocessed += workerload;
-
-                          // Send new process command so fancy displaying can be done in parallel
-                          var ids = [];
-                          for(var i=0;i<workerload;i++){
-                           ids.push(R.randi(0, data_msgs.length));
-                          }
-                          console.log("ids", ids);
-                          worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
-
-                          if(noprocessed/workerload % 2 == 1){
-                            // Run the predictor in a seperate thread
-                            ids = [];
-                            for(var i=0;i<5;i++){
-                             ids.push(R.randi(0, data_msgs.length));
-                            }
-                            // do some predictions
-                            predictor.postMessage({type: "predict", maxLength: max_chars_gen, model: saveModelInternal(), ids: ids, temperature: sample_softmax_temperature});
-                          }
-
-                          if(noprocessed/workerload % 10 == 9){
-                            var median_ppl = median(ppl_list);
-                            ppl_list = [];
-                            pplGraph.add(noprocessed, median_ppl);
-                            pplGraph.drawSelf(document.getElementById("pplgraph"));
-                          }
-
-
-                          ppl_list = ppl_list.concat(e.data.ppls); 
-
-                          // keep track of perplexity
-                          $('#epoch').text('epoch: ' + (noprocessed/epoch_size).toFixed(3) + " ("+noprocessed+" conversations processed)");
-                          $('#ppl').text('perplexity: ' + median(e.data.ppls).toFixed(2));
-                          $('#ticktime').text('forw/bwd time per example: ' + (tick_time/workerload).toFixed(1) + 'ms');
-
-                          break;
-    }
+      }
+    });
   });
 
   predictor.addEventListener("message", function(e){
     switch(e.data.type){
+      case "setup": $.getJSON("data/conversations.json", function( data ) {
+                      data_msgs = data;
+                      predictor.postMessage({type: "setDataSet", data: data});
+                    });
+                    break;
       case "predictDone": $('#samples').html('');
                           for(var q=0;q<e.data.predictions.length;q++) {
                             var pred_div = '<div class="apred">Context: '+e.data.predictions[q].context+'<br>Output: '+e.data.predictions[q].output+'</div>'
@@ -411,7 +493,7 @@ $(function() {
   });
 
 
-  worker.postMessage({type: "ping"});
+  workers.forEach(function(worker){worker.postMessage({type: "ping"})});
 
 
 });
@@ -437,7 +519,7 @@ $(function() {
 
 // model parameters
 generator = 'lstm'; // can be 'rnn' or 'lstm'
-hidden_sizes = [100,100,100,100]; // list of sizes of hidden layers
+hidden_sizes = [25,25,25]; // list of sizes of hidden layers
 letter_size = 7; // size of letter embeddings
 
 // optimization

@@ -2,7 +2,7 @@ importScripts('recurrent.js');
 
 // prediction params
 var sample_softmax_temperature = 1.0; // how peaky model predictions should be
-var max_chars_gen = 100; // max length of generated sentences
+var max_chars_gen = 1000; // max length of generated sentences
 
 // various global var inits
 var epoch_size = -1;
@@ -282,6 +282,8 @@ onmessage = function(e){
                     var cost_struct = {};
                     var ppls = [], costs = [];
                     for(var i=0;i<e.data.ids.length;i++){
+                      // stop long convo blowing up backprop
+                      if(data_msgs[e.data.ids[i]].reduce(function(curr,nxt){return curr+nxt.length}, 0) > 2000) continue;
                       cost_struct = costfunconvo(model, data_msgs[e.data.ids[i]]);
                       // update model's dws:
                       cost_struct.G.backward();
