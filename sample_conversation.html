@@ -95,46 +95,6 @@ var pplGraph = new Rvis.Graph();
 
 var model = {};
 
-var initVocab = function(count_threshold) {
-  // go over all characters and keep track of all unique ones seen
-  // select 10% of conversations
-  var txt = data_msgs.filter(function(){return Math.random() < 0.1;}).reduce(function(curr, nxt){return curr+nxt.join('');}, ''); // fixed input
-
-  console.log(txt.length);
-
-  // count up all characters
-  var d = {};
-  for(var i=0,n=txt.length;i<n;i++) {
-    var txti = txt[i];
-    if(txti in d) { d[txti] += 1; } 
-    else { d[txti] = 1; }
-  }
-
-  // filter by count threshold and create pointers
-  letterToIndex = {};
-  indexToLetter = {};
-  vocab = [];
-  // NOTE: start at one because we will have START and END tokens!
-  // that is, START token will be index 0 in model letter vectors
-  // and END token will be index 0 in the next character softmax
-  var q = 1; 
-  for(ch in d) {
-    if(d[ch] >= count_threshold) {
-      // add character to vocab
-      letterToIndex[ch] = q;
-      indexToLetter[q] = ch;
-      vocab.push(ch);
-      q++;
-    }
-  }
-
-  // globals written: indexToLetter, letterToIndex, vocab (list), and:
-  input_size = vocab.length + 1;
-  output_size = vocab.length + 1;
-  epoch_size = data_msgs.length;
-  $("#prepro_status").text('found ' + vocab.length + ' distinct characters: ' + vocab.join(''));
-}
-
 var utilAddToModel = function(modelto, modelfrom) {
   for(var k in modelfrom) {
     if(modelfrom.hasOwnProperty(k)) {
@@ -291,57 +251,6 @@ var forwardIndex = function(G, model, ix, prev) {
   return out_struct;
 }
 
-var predictConversation = function(model, context, samplei, temperature) {
-  if(typeof samplei === 'undefined') { samplei = false; }
-  if(typeof temperature === 'undefined') { temperature = 1.0; }
-
-  var G = new R.Graph(false);
-  var output = '';
-  var prev = {};
-
-  for(i=0;i<context.length;i++){
-    // Context
-    var ix = i == 0 ? 0 : letterToIndex[context[i]];
-    var lh = forwardIndex(G, model, ix, prev);
-    prev = lh;
-  }
-
-  while(true) {
-    // Generate
-
-    // RNN tick
-    var ix = output.length === 0 ? 0 : letterToIndex[output[output.length-1]];
-    var lh = forwardIndex(G, model, ix, prev);
-    prev = lh;
-
-    // sample predicted letter
-    logprobs = lh.o;
-    if(temperature !== 1.0 && samplei) {
-      // scale log probabilities by temperature and renormalize
-      // if temperature is high, logprobs will go towards zero
-      // and the softmax outputs will be more diffuse. if temperature is
-      // very low, the softmax outputs will be more peaky
-      for(var q=0,nq=logprobs.w.length;q<nq;q++) {
-        logprobs.w[q] /= temperature;
-      }
-    }
-
-    probs = R.softmax(logprobs);
-    if(samplei) {
-      var ix = R.samplei(probs.w);
-    } else {
-      var ix = R.maxi(probs.w);
-    }
-    
-    if(ix === 0) break; // END token predicted, break out
-    if(output.length > max_chars_gen) { break; } // something is wrong
-
-    var letter = indexToLetter[ix];
-    output += letter;
-  }
-  return {context: context, output: output};
-}
-
 function median(values) {
   values.sort( function(a,b) {return a - b;} );
   var half = Math.floor(values.length/2);
@@ -398,62 +307,96 @@ $(function() {
   });
 
 
-  var workerload = 10;
+  var workerload = 25;
   var t0 = +new Date();
   var noprocessed = 0;
   var ppl_list = [];
 
   var worker = new Worker("src/runner.js");
+  var predictor = new Worker("src/runner.js");
   worker.addEventListener("message", function(e){
     switch(e.data.type){
       case "setup": $.getJSON("data/conversations.json", function( data ) {
                       data_msgs = data;
                       worker.postMessage({type: "setDataSet", data: data});
+                      predictor.postMessage({type: "setDataSet", data: data});
                       console.log(data_msgs.length, data_msgs[0].length);
                     });
                     break;
-      case "setDataSetDone": eval($("#newnet").val());
-                             reinit_learning_rate_slider();
-                             solver = new R.Solver(); // reinit solver
-                             initVocab(1); // takes count threshold for characters
-                             model = initModel();
-                             var ids = [];
-                             for(var i=0;i<workerload;i++){
-                              ids.push(R.randi(0, data_msgs.length));
-                             }
-                             console.log("ids", ids);
-                             worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
+      case "setDataSetDone": worker.postMessage({type: "calcVocab"});
                              break;
+      case "calcVocabDone": eval($("#newnet").val());
+                            reinit_learning_rate_slider();
+                            solver = new R.Solver(); // reinit solver
+                            
+                            // Use results from calcVocab
+                            console.log(e.data);
+                            vocab=e.data.vocab;
+                            input_size=e.data.input_size;
+                            output_size=e.data.output_size;
+                            epoch_size=e.data.epoch_size;
+                            letterToIndex=e.data.letterToIndex;
+                            indexToLetter=e.data.indexToLetter;
+                            $("#prepro_status").text('found ' + vocab.length + ' distinct characters: ' + vocab.join(''));
+
+                            model = initModel();
+                            var ids = [];
+                            for(var i=0;i<workerload;i++){
+                             ids.push(R.randi(0, data_msgs.length));
+                            }
+                            console.log("ids", ids);
+                            worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
+                            break;
       case "processDone": // TODO
                           loadModelInternal(e.data.model);
                           var solver_stats = solver.step(model, learning_rate, regc, clipval);
-
-                          $('#samples').html('');
-                          for(var q=0;q<5;q++) {
-                            var context = data_msgs[R.randi(0, data_msgs.length)];
-                            var pred = predictConversation(model, context[0], true, sample_softmax_temperature);
-                            var pred_div = '<div class="apred">Context: '+pred.context+'<br>Output: '+pred.output+'</div>'
-                            $('#samples').append(pred_div);
-                          }
-
-                          // draw argmax prediction
-                          $('#argmax').html('');
-                          var context = data_msgs[R.randi(0, data_msgs.length)];
-                          var pred = predictConversation(model, context[0], false);
-                          var pred_div = '<div class="apred">Context: '+pred.context+'<br>Output: '+pred.output+'</div>'
-                          $('#argmax').append(pred_div);
 
                           var t1 = +new Date();
                           var tick_time = t1 - t0;
                           t0 = t1;
                           noprocessed += workerload;
 
+                          // Send new process command so fancy displaying can be done in parallel
+                          var ids = [];
+                          for(var i=0;i<workerload;i++){
+                           ids.push(R.randi(0, data_msgs.length));
+                          }
+                          console.log("ids", ids);
+                          worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
+
+                          // Run the predictor in a seperate thread
+                          ids = [];
+                          for(var i=0;i<5;i++){
+                           ids.push(R.randi(0, data_msgs.length));
+                          }
+                          // do some predictions
+                          predictor.postMessage({type: "predict", maxLength: max_chars_gen, model: saveModelInternal(), ids: ids, temperature: sample_softmax_temperature});
+
+
+                          ppl_list = ppl_list.concat(e.data.ppls); 
+
                           // keep track of perplexity
-                          $('#epoch').text('epoch: ' + (noprocessed/epoch_size).toFixed(3));
+                          $('#epoch').text('epoch: ' + (noprocessed/epoch_size).toFixed(3) + " ("+noprocessed+" conversations processed)");
                           $('#ppl').text('perplexity: ' + median(e.data.ppls).toFixed(2));
                           $('#ticktime').text('forw/bwd time per example: ' + (tick_time/workerload).toFixed(1) + 'ms');
 
-                          ppl_list = ppl_list.concat(e.data.ppls); 
+                          break;
+    }
+  });
+
+  predictor.addEventListener("message", function(e){
+    switch(e.data.type){
+      case "predictDone": $('#samples').html('');
+                          for(var q=0;q<e.data.predictions.length;q++) {
+                            var pred_div = '<div class="apred">Context: '+e.data.predictions[q].context+'<br>Output: '+e.data.predictions[q].output+'</div>'
+                            $('#samples').append(pred_div);
+                          }
+
+                          // draw argmax prediction
+                          $('#argmax').html('');
+                          var pred_div = '<div class="apred">Context: '+e.data.argmax.context+'<br>Output: '+e.data.argmax.output+'</div>'
+                          $('#argmax').append(pred_div);
+
 
                           if(noprocessed/workerload % 10 == 9){
                             var median_ppl = median(ppl_list);
@@ -461,13 +404,6 @@ $(function() {
                             pplGraph.add(noprocessed, median_ppl);
                             pplGraph.drawSelf(document.getElementById("pplgraph"));
                           }
-
-                          var ids = [];
-                          for(var i=0;i<workerload;i++){
-                           ids.push(R.randi(0, data_msgs.length));
-                          }
-                          console.log("ids", ids);
-                          worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
                           break;
     }
   });
@@ -499,8 +435,8 @@ $(function() {
 
 // model parameters
 generator = 'lstm'; // can be 'rnn' or 'lstm'
-hidden_sizes = [25,25,25,25]; // list of sizes of hidden layers
-letter_size = 6; // size of letter embeddings
+hidden_sizes = [100,100,100,100]; // list of sizes of hidden layers
+letter_size = 7; // size of letter embeddings
 
 // optimization
 regc = 0.000001; // L2 regularization strength

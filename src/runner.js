@@ -19,9 +19,7 @@ var model = {};
 var initVocab = function(count_threshold) {
   // go over all characters and keep track of all unique ones seen
   // select 10% of conversations
-  var txt = data_msgs.filter(function(){return Math.random() < 0.1;}).reduce(function(curr, nxt){return curr+nxt.join('');}, ''); // fixed input
-
-  console.log(txt.length);
+  var txt = data_msgs.reduce(function(curr, nxt){return curr+nxt.join('');}, ''); // fixed input
 
   // count up all characters
   var d = {};
@@ -32,9 +30,9 @@ var initVocab = function(count_threshold) {
   }
 
   // filter by count threshold and create pointers
-  letterToIndex = {};
-  indexToLetter = {};
-  vocab = [];
+  var letterToIndex = {},
+      indexToLetter = {},
+      vocab = [];
   // NOTE: start at one because we will have START and END tokens!
   // that is, START token will be index 0 in model letter vectors
   // and END token will be index 0 in the next character softmax
@@ -49,10 +47,7 @@ var initVocab = function(count_threshold) {
     }
   }
 
-  // globals written: indexToLetter, letterToIndex, vocab (list), and:
-  input_size = vocab.length + 1;
-  output_size = vocab.length + 1;
-  epoch_size = data_msgs.length;
+  return {vocab: vocab, indexToLetter: indexToLetter, letterToIndex: letterToIndex, input_size: vocab.length + 1, output_size: vocab.length + 1, epoch_size: data_msgs.length};
 }
 
 var utilAddToModel = function(modelto, modelfrom) {
@@ -141,6 +136,57 @@ var forwardIndex = function(G, model, ix, prev) {
   return out_struct;
 }
 
+var predictConversation = function(context, max_char_gen, samplei, temperature) {
+  if(typeof samplei === 'undefined') { samplei = false; }
+  if(typeof temperature === 'undefined') { temperature = 1.0; }
+
+  var G = new R.Graph(false);
+  var output = '';
+  var prev = {};
+
+  for(i=0;i<context.length;i++){
+    // Context
+    var ix = i == 0 ? 0 : letterToIndex[context[i]];
+    var lh = forwardIndex(G, model, ix, prev);
+    prev = lh;
+  }
+
+  while(true) {
+    // Generate
+
+    // RNN tick
+    var ix = output.length === 0 ? 0 : letterToIndex[output[output.length-1]];
+    var lh = forwardIndex(G, model, ix, prev);
+    prev = lh;
+
+    // sample predicted letter
+    logprobs = lh.o;
+    if(temperature !== 1.0 && samplei) {
+      // scale log probabilities by temperature and renormalize
+      // if temperature is high, logprobs will go towards zero
+      // and the softmax outputs will be more diffuse. if temperature is
+      // very low, the softmax outputs will be more peaky
+      for(var q=0,nq=logprobs.w.length;q<nq;q++) {
+        logprobs.w[q] /= temperature;
+      }
+    }
+
+    probs = R.softmax(logprobs);
+    if(samplei) {
+      var ix = R.samplei(probs.w);
+    } else {
+      var ix = R.maxi(probs.w);
+    }
+    
+    if(ix === 0) break; // END token predicted, break out
+    if(output.length > max_chars_gen) { break; } // something is wrong
+
+    var letter = indexToLetter[ix];
+    output += letter;
+  }
+  return {context: context, output: output};
+}
+
 var costfunconvo = function(model, msgs) {
   // takes a model and a message sequence and
   // calculates the loss. Also returns the Graph
@@ -224,8 +270,8 @@ onmessage = function(e){
     case "setDataSet": data_msgs = e.data.data; postMessage({type: "setDataSetDone"});
                         break;
     // calcVocab counts through the dataset and returns the vocab
-    case "calcVocab": //TODO
-                      postMessage({type: "calcVocabDone"});
+    case "calcVocab": var rets = initVocab(1);
+                      postMessage({type: "calcVocabDone", vocab: rets.vocab, indexToLetter: rets.indexToLetter, letterToIndex: rets.letterToIndex, input_size: rets.input_size, output_size: rets.output_size, epoch_size: rets.epoch_size});
                       break;
     // setModel gets a model object and loads the parameters into memory
     case "setModel": loadModelInternal(e.data.model);
@@ -244,6 +290,14 @@ onmessage = function(e){
                       cost_struct = {}; // GC
                     }
                     postMessage({type: "processDone", model: saveModelInternal(), ppls: ppls, costs: costs});
+                    break;
+    case "predict": loadModelInternal(e.data.model);
+                    var rets = [];
+                    for(var i=0;i<e.data.ids.length;i++){
+                      rets.push(predictConversation(data_msgs[e.data.ids[i]][0], (e.data.maxLength ? 1000 : e.data.maxLength), true, e.data.temperature));
+                    }
+                    postMessage({type: "predictDone", predictions: rets, argmax: predictConversation(data_msgs[e.data.ids[0]][0], false)});
+                    break;
 
   }
 }
