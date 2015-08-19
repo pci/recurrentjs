@@ -307,7 +307,7 @@ $(function() {
   });
 
 
-  var workerload = 25;
+  var workerload = 10;
   var t0 = +new Date();
   var noprocessed = 0;
   var ppl_list = [];
@@ -364,13 +364,22 @@ $(function() {
                           console.log("ids", ids);
                           worker.postMessage({type: "process", model: saveModelInternal(), ids:ids});
 
-                          // Run the predictor in a seperate thread
-                          ids = [];
-                          for(var i=0;i<5;i++){
-                           ids.push(R.randi(0, data_msgs.length));
+                          if(noprocessed/workerload % 2 == 1){
+                            // Run the predictor in a seperate thread
+                            ids = [];
+                            for(var i=0;i<5;i++){
+                             ids.push(R.randi(0, data_msgs.length));
+                            }
+                            // do some predictions
+                            predictor.postMessage({type: "predict", maxLength: max_chars_gen, model: saveModelInternal(), ids: ids, temperature: sample_softmax_temperature});
                           }
-                          // do some predictions
-                          predictor.postMessage({type: "predict", maxLength: max_chars_gen, model: saveModelInternal(), ids: ids, temperature: sample_softmax_temperature});
+
+                          if(noprocessed/workerload % 10 == 9){
+                            var median_ppl = median(ppl_list);
+                            ppl_list = [];
+                            pplGraph.add(noprocessed, median_ppl);
+                            pplGraph.drawSelf(document.getElementById("pplgraph"));
+                          }
 
 
                           ppl_list = ppl_list.concat(e.data.ppls); 
@@ -397,13 +406,6 @@ $(function() {
                           var pred_div = '<div class="apred">Context: '+e.data.argmax.context+'<br>Output: '+e.data.argmax.output+'</div>'
                           $('#argmax').append(pred_div);
 
-
-                          if(noprocessed/workerload % 10 == 9){
-                            var median_ppl = median(ppl_list);
-                            ppl_list = [];
-                            pplGraph.add(noprocessed, median_ppl);
-                            pplGraph.drawSelf(document.getElementById("pplgraph"));
-                          }
                           break;
     }
   });
