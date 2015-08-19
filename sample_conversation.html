@@ -237,7 +237,7 @@ var saveModel = function() {
   $("#tio").val(JSON.stringify(obj));
 }
 
-var loadModel = function(j) {
+var loadModelInternal = function(j){
   hidden_sizes = j.hidden_sizes;
   generator = j.generator;
   letter_size = j.letter_size;
@@ -249,20 +249,29 @@ var loadModel = function(j) {
       model[k].fromJSON(matjson);
     }
   }
+  letterToIndex = j['letterToIndex'];
+  indexToLetter = j['indexToLetter'];
+  vocab = j['vocab'];
+}
+
+var loadSolverInternal = function(j){
   solver = new R.Solver(); // have to reinit the solver since model changed
-  solver.decay_rate = j.solver.decay_rate;
-  solver.smooth_eps = j.solver.smooth_eps;
+  solver.decay_rate = j.decay_rate;
+  solver.smooth_eps = j.smooth_eps;
   solver.step_cache = {};
-  for(var k in j.solver.step_cache){
-      if(j.solver.step_cache.hasOwnProperty(k)){
-          var matjson = j.solver.step_cache[k];
+  for(var k in j.step_cache){
+      if(j.step_cache.hasOwnProperty(k)){
+          var matjson = j.step_cache[k];
           solver.step_cache[k] = new R.Mat(1,1);
           solver.step_cache[k].fromJSON(matjson);
       }
   }
-  letterToIndex = j['letterToIndex'];
-  indexToLetter = j['indexToLetter'];
-  vocab = j['vocab'];
+
+}
+
+var loadModel = function(j) {
+  loadModelInternal(j);
+  loadSolverInternal(j.solver);
 
   // Restart the graph
   pplGraph = new Rvis.Graph();

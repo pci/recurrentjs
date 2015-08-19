@@ -93,7 +93,22 @@ var saveModelInternal = function() {
   return out;
 }
 
-var loadModel = function(j) {
+
+var saveSovlerInternal = function(){
+  var solver_out = {};
+  solver_out['decay_rate'] = solver.decay_rate;
+  solver_out['smooth_eps'] = solver.smooth_eps;
+  step_cache_out = {};
+  for(var k in solver.step_cache) {
+    if(solver.step_cache.hasOwnProperty(k)) {
+      step_cache_out[k] = solver.step_cache[k].toJSON();
+    }
+  }
+  solver_out['step_cache'] = step_cache_out;
+  return solver_out;
+}
+
+var loadModelInternal = function(j){
   hidden_sizes = j.hidden_sizes;
   generator = j.generator;
   letter_size = j.letter_size;
@@ -105,20 +120,25 @@ var loadModel = function(j) {
       model[k].fromJSON(matjson);
     }
   }
+  letterToIndex = j['letterToIndex'];
+  indexToLetter = j['indexToLetter'];
+  vocab = j['vocab'];
+}
+
+
+var loadSolverInternal = function(j){
   solver = new R.Solver(); // have to reinit the solver since model changed
-  solver.decay_rate = j.solver.decay_rate;
-  solver.smooth_eps = j.solver.smooth_eps;
+  solver.decay_rate = j.decay_rate;
+  solver.smooth_eps = j.smooth_eps;
   solver.step_cache = {};
-  for(var k in j.solver.step_cache){
-      if(j.solver.step_cache.hasOwnProperty(k)){
-          var matjson = j.solver.step_cache[k];
+  for(var k in j.step_cache){
+      if(j.step_cache.hasOwnProperty(k)){
+          var matjson = j.step_cache[k];
           solver.step_cache[k] = new R.Mat(1,1);
           solver.step_cache[k].fromJSON(matjson);
       }
   }
-  letterToIndex = j['letterToIndex'];
-  indexToLetter = j['indexToLetter'];
-  vocab = j['vocab'];
+
 }
 
 var forwardIndex = function(G, model, ix, prev) {
@@ -132,16 +152,15 @@ var forwardIndex = function(G, model, ix, prev) {
   return out_struct;
 }
 
-var costfunconvo = function(model, msgs, prev_run) {
+var costfunconvo = function(model, msgs) {
   // takes a model and a message sequence and
   // calculates the loss. Also returns the Graph
   // object which can be used to do backprop
-  prev_run = (prev_run === undefined ? {} : prev_run);
-  var G = (prev_run.G === undefined ? new R.Graph() : prev_run.G);
-  var log2ppl = (prev_run.log2ppl === undefined ? 0.0 : prev_run.log2ppl);
-  var cost = (prev_run.cost === undefined ? 0.0 : prev_run.cost);
-  var totaln = (prev_run.totaln === undefined ? 0 : prev_run.totaln);
+  var G = new R.Graph();
+  var log2ppl = 0.0;
+  var cost = 0.0;
   var prev = {};
+  var totaln = 0;
 
   // Set context
   var currmsg = msgs[0],
@@ -159,6 +178,7 @@ var costfunconvo = function(model, msgs, prev_run) {
   for(var m=2;m<msgs.length;m++) {
     currmsg = msgs[m];
     n = currmsg.length;
+    totaln += n;
 
     // Iterate over the message sequence:
     for(i=-1;i<n;i++){
@@ -181,9 +201,8 @@ var costfunconvo = function(model, msgs, prev_run) {
       logprobs.dw[ix_target] -= 1
     }
   }
-  totaln += n;
   var ppl = Math.pow(2, log2ppl / (totaln - 1));
-  return {'G':G, 'ppl':ppl, 'log2ppl': log2ppl, 'cost':cost, 'totaln': totaln};
+  return {'G':G, 'ppl':ppl, 'cost':cost, 'totaln': totaln};
 }
 
 onmessage = function(e){
@@ -198,17 +217,22 @@ onmessage = function(e){
                       postMessage({type: "calcVocabDone"});
                       break;
     // setModel gets a model object and loads the parameters into memory
-    case "setModel": loadModel(e.data.model);
+    case "setModel": loadModelInternal(e.data.model);
                      postMessage({type: "setModelDone"});
                      break;
     // process gets a model and list of conversation indexes to process
-    case "process": loadModel(e.data.model);
+    case "process": loadModelInternal(e.data.model);
                     var cost_struct = {};
+                    var ppls = [], costs = [];
                     for(var i=0;i<e.data.ids.length;i++){
-                      cost_struct = costfunconvo(model, data_msgs[e.data.ids[i]], cost_struct);
+                      cost_struct = costfunconvo(model, data_msgs[e.data.ids[i]]);
+                      // update model's dws:
+                      cost_struct.G.backward();
+                      ppls.push(cost_struct.ppl);
+                      costs.push(cost_struct.cost);
                     }
-                    console.log(JSON.stringify(cost_struct));
-                    postMessage({type: "processDone", cost_struct: cost_struct});
+                    console.log(JSON.stringify(cost_struct.ppl));
+                    postMessage({type: "processDone", model: saveModelInternal(), ppls: ppls, costs: costs});
 
   }
 }
