@@ -194,6 +194,28 @@ var costfunconvo = function(model, msgs) {
   return {'G':G, 'ppl':ppl, 'cost':cost, 'totaln': totaln};
 }
 
+var reduceModels = function(modelIttList){
+  // reduceModels takes a list of {model, noItt}
+  // where the models are identically shaped and have identical weights
+  // (otherwise it doesn't make sense) and combine their differentials.
+  // The noItt is used to normalize the differentials after reducing
+  var outmodel = modelIttList[0].model;
+  var sumItt = modelIttList.reduce(function(curr,nxt){return curr+nxt.noItt;}, 0);
+
+  for(var k in outmodel) {
+    if(outmodel.hasOwnProperty(k)) {
+      for(var i=1;i<modelIttList.length;i++){
+        var othermodel = modelIttList[i].model;
+        for(var j=0;j<outmodel[k].dw.length;j++){
+          outmodel[k].dw[j] += othermodel[k].dw[j];
+        }
+      }
+    }
+  }
+
+  return {model: outmodel, noItt: sumItt};
+}
+
 onmessage = function(e){
   switch(e.data.type){
     case "ping": postMessage({type: "pong"});
@@ -219,8 +241,8 @@ onmessage = function(e){
                       cost_struct.G.backward();
                       ppls.push(cost_struct.ppl);
                       costs.push(cost_struct.cost);
+                      cost_struct = {}; // GC
                     }
-                    console.log(JSON.stringify(cost_struct.ppl));
                     postMessage({type: "processDone", model: saveModelInternal(), ppls: ppls, costs: costs});
 
   }
