@@ -77,6 +77,7 @@ var R = {}; // the Recurrent library
       json['n'] = this.n;
       json['d'] = this.d;
       json['w'] = this.w;
+      json['dw'] = this.dw;
       return json;
     },
     fromJSON: function(json) {
@@ -86,6 +87,7 @@ var R = {}; // the Recurrent library
       this.dw = zeros(this.n * this.d);
       for(var i=0,n=this.n * this.d;i<n;i++) {
         this.w[i] = json.w[i]; // copy over weights
+        this.dw[i] = json.dw[i];
       }
     }
   }

@@ -76,17 +76,6 @@ var saveModelInternal = function() {
     }
   }
   out['model'] = model_out;
-  var solver_out = {};
-  solver_out['decay_rate'] = solver.decay_rate;
-  solver_out['smooth_eps'] = solver.smooth_eps;
-  step_cache_out = {};
-  for(var k in solver.step_cache) {
-    if(solver.step_cache.hasOwnProperty(k)) {
-      step_cache_out[k] = solver.step_cache[k].toJSON();
-    }
-  }
-  solver_out['step_cache'] = step_cache_out;
-  out['solver'] = solver_out;
   out['letterToIndex'] = letterToIndex;
   out['indexToLetter'] = indexToLetter;
   out['vocab'] = vocab;

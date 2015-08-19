@@ -499,7 +499,7 @@ $(function() {
                              worker.postMessage({type: "process", model: saveModelInternal(), ids:[0,1]});
                              break;
       case "processDone": // TODO
-                          console.log(JSON.stringify(e.data));
+                          console.log(JSON.stringify(e.data.model.dw));
                           break;
     }
   });
